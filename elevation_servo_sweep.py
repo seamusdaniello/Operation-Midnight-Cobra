@@ -31,7 +31,7 @@ except Exception:
     _factory = None
 
 SERVO_PIN  = 27      # GPIO 27 — physical pin 13 (GPIO 17 is taken by azimuth)
-AMPLITUDE  = 15.0    # degrees
+AMPLITUDE  = 60.0    # degrees
 BIAS       = 0.0     # degrees
 FREQUENCY  = 0.1     # rad/s  →  period ≈ 62.8 s
 UPDATE_HZ  = 50.0    # servo update rate

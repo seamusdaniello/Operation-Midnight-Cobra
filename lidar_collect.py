@@ -14,11 +14,14 @@ Usage:
     t.join()
 """
 
+import math
 import serial
 import serial.tools.list_ports
 import threading
 import time
 from typing import Callable, Optional
+
+import numpy as np
 
 BAUD = 115200
 READ_CMD = b"?LD\r\n"
@@ -45,18 +48,23 @@ DETECTION_THRESHOLD_MM = 90_000  # 90 metres
 
 
 class LidarMeasurement:
-    """A single range reading. range is in millimeters."""
+    """A single range reading stamped with the servo angles at collection time."""
 
-    def __init__(self, range_mm: int):
-        self.range = range_mm
+    def __init__(self, range_mm: int, az_rad: float = 0.0, el_rad: float = 0.0):
+        self.range    = range_mm
+        self.az_rad   = az_rad
+        self.el_rad   = el_rad
         self.detected = range_mm < DETECTION_THRESHOLD_MM
 
     def __repr__(self) -> str:
-        return f"LidarMeasurement(range={self.range}mm, detected={self.detected})"
+        return (
+            f"LidarMeasurement(range={self.range}mm, detected={self.detected}, "
+            f"az={math.degrees(self.az_rad):.2f}°, el={math.degrees(self.el_rad):.2f}°)"
+        )
 
 
 class LidarEngine:
-    def __init__(self, port: str = None, baud: int = BAUD):
+    def __init__(self, port: str = None, baud: int = BAUD, az_engine=None, el_engine=None):
         port = port or find_port()
         print(f"[+] LiDAR detected on {port}")
         self._ser = serial.Serial(port, baud, timeout=0.5)
@@ -65,6 +73,8 @@ class LidarEngine:
         self._buffer = []
         self._buffer_lock = threading.Lock()
         self.stream_running = False
+        self._az_engine = az_engine   # AzimuthServoEngine  – read .current_angle (deg)
+        self._el_engine = el_engine   # ElevationServoEngine – read .current_angle (deg)
 
     def drain_buffer(self) -> list:
         """Return all buffered measurements since the last drain and clear the buffer."""
@@ -73,6 +83,23 @@ class LidarEngine:
             self._buffer.clear()
             return data
 
+    def drain_as_tracker_input(self) -> np.ndarray:
+        """
+        Drain the buffer and return a (M, 3) float64 array of
+        [az_rad, el_rad, range_m] rows, one per valid detection.
+
+        Measurements where detected=False (no return within 90 m) are rejected
+        here — before they can reach the filter — rather than relying on the
+        tracker's range gate as a fallback.
+        """
+        raw_batch = self.drain_buffer()
+        rows = [
+            [m.az_rad, m.el_rad, m.range / 1000.0]
+            for m in raw_batch
+            if m.detected
+        ]
+        return np.array(rows, dtype=np.float64) if rows else np.empty((0, 3), dtype=np.float64)
+
     def lidar_collection(self) -> str:
         """Send a poll command and return the raw response string."""
         with self._lock:
@@ -80,13 +107,13 @@ class LidarEngine:
             self._ser.write(READ_CMD)
             return self._ser.readline().decode("ascii", errors="ignore").strip()
 
-    def lidar_formatting(self, raw: str) -> Optional[LidarMeasurement]:
+    def lidar_formatting(self, raw: str, az_rad: float = 0.0, el_rad: float = 0.0) -> Optional[LidarMeasurement]:
         """Parse a raw response into a LidarMeasurement. Returns None on bad data."""
         if ":" not in raw:
             return None
         try:
             meters = float(raw.split(":")[-1])
-            return LidarMeasurement(int(meters * 1000))
+            return LidarMeasurement(int(meters * 1000), az_rad=az_rad, el_rad=el_rad)
         except ValueError:
             return None
 
@@ -111,7 +138,13 @@ class LidarEngine:
             t0 = time.time()
 
             raw = self.lidar_collection()
-            measurement = self.lidar_formatting(raw)
+
+            # Snapshot servo angles immediately after the response arrives —
+            # before any other work — to minimise pointing error.
+            az_rad = math.radians(self._az_engine.current_angle) if self._az_engine else 0.0
+            el_rad = math.radians(self._el_engine.current_angle) if self._el_engine else 0.0
+
+            measurement = self.lidar_formatting(raw, az_rad=az_rad, el_rad=el_rad)
 
             if measurement is not None:
                 with self._buffer_lock:
