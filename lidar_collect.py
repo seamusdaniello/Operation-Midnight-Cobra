@@ -15,13 +15,33 @@ Usage:
 """
 
 import serial
+import serial.tools.list_ports
 import threading
 import time
 from typing import Callable, Optional
 
-PORT = "/dev/cu.usbserial-BB0_16170"
 BAUD = 115200
 READ_CMD = b"?LD\r\n"
+
+LIGHTWARE_VID = 0x0403  # FTDI — used on all Lightware SF series
+
+
+def find_port() -> str:
+    """Auto-detect the Lightware LiDAR by USB vendor ID."""
+    candidates = [
+        p for p in serial.tools.list_ports.comports()
+        if p.vid == LIGHTWARE_VID or (p.manufacturer or "").lower() == "lightware"
+    ]
+    if not candidates:
+        raise RuntimeError(
+            "Lightware LiDAR not found. Check the USB connection and try again."
+        )
+    if len(candidates) > 1:
+        print(f"[!] Multiple FTDI devices found, using {candidates[0].device}")
+    return candidates[0].device
+
+
+DETECTION_THRESHOLD_MM = 90_000  # 90 metres
 
 
 class LidarMeasurement:
@@ -29,17 +49,29 @@ class LidarMeasurement:
 
     def __init__(self, range_mm: int):
         self.range = range_mm
+        self.detected = range_mm < DETECTION_THRESHOLD_MM
 
     def __repr__(self) -> str:
-        return f"LidarMeasurement(range={self.range}mm)"
+        return f"LidarMeasurement(range={self.range}mm, detected={self.detected})"
 
 
 class LidarEngine:
-    def __init__(self, port: str = PORT, baud: int = BAUD):
+    def __init__(self, port: str = None, baud: int = BAUD):
+        port = port or find_port()
+        print(f"[+] LiDAR detected on {port}")
         self._ser = serial.Serial(port, baud, timeout=0.5)
         self._ser.reset_input_buffer()
         self._lock = threading.Lock()
+        self._buffer = []
+        self._buffer_lock = threading.Lock()
         self.stream_running = False
+
+    def drain_buffer(self) -> list:
+        """Return all buffered measurements since the last drain and clear the buffer."""
+        with self._buffer_lock:
+            data = list(self._buffer)
+            self._buffer.clear()
+            return data
 
     def lidar_collection(self) -> str:
         """Send a poll command and return the raw response string."""
@@ -81,8 +113,11 @@ class LidarEngine:
             raw = self.lidar_collection()
             measurement = self.lidar_formatting(raw)
 
-            if measurement is not None and callback is not None:
-                callback(measurement)
+            if measurement is not None:
+                with self._buffer_lock:
+                    self._buffer.append(measurement)
+                if callback is not None:
+                    callback(measurement)
 
             elapsed = time.time() - t0
             remaining = interval - elapsed
