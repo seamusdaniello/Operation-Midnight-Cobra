@@ -24,11 +24,24 @@ import threading
 import time
 
 try:
+    import os
     from gpiozero import AngularServo
     from gpiozero.pins.pigpio import PiGPIOFactory
-    _factory = PiGPIOFactory()
+    _devnull  = os.open(os.devnull, os.O_WRONLY)
+    _saved_fd = os.dup(2)
+    os.dup2(_devnull, 2)
+    os.close(_devnull)
+    try:
+        _factory = PiGPIOFactory()
+    finally:
+        os.dup2(_saved_fd, 2)
+        os.close(_saved_fd)
 except Exception:
     _factory = None
+    class AngularServo:  # stub for non-Pi environments
+        def __init__(self, *_, **settings): self.angle = settings.get('min_angle', 0.0)
+        def mid(self): pass
+        def close(self): pass
 
 SERVO_PIN  = 27      # GPIO 27 — physical pin 13 (GPIO 17 is taken by azimuth)
 AMPLITUDE  = 60.0    # degrees

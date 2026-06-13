@@ -21,8 +21,6 @@ import threading
 import time
 from typing import Callable, Optional
 
-import numpy as np
-
 BAUD = 115200
 READ_CMD = b"?LD\r\n"
 
@@ -83,7 +81,7 @@ class LidarEngine:
             self._buffer.clear()
             return data
 
-    def drain_as_tracker_input(self) -> np.ndarray:
+    def drain_as_tracker_input(self):
         """
         Drain the buffer and return a (M, 3) float64 array of
         [az_rad, el_rad, range_m] rows, one per valid detection.
@@ -92,6 +90,7 @@ class LidarEngine:
         here — before they can reach the filter — rather than relying on the
         tracker's range gate as a fallback.
         """
+        import numpy as np
         raw_batch = self.drain_buffer()
         rows = [
             [m.az_rad, m.el_rad, m.range / 1000.0]

@@ -114,13 +114,13 @@ def multi_rat_tracker(
 
     for track_idx, track in enumerate(_active_tracks):
         # Innovation covariance: S = H P H' + R
-        innov_cov   = observation_matrix @ track.covariance @ observation_matrix.T + sensor_R
-        kalman_gain = track.covariance @ observation_matrix.T @ np.linalg.inv(innov_cov)
+        innov_cov = observation_matrix @ track.covariance @ observation_matrix.T + sensor_R
+        S_inv     = np.linalg.inv(innov_cov)                        # compute once, reuse below
+        kalman_gain = track.covariance @ observation_matrix.T @ S_inv
         innov_covariance_list.append(innov_cov)
         kalman_gain_list.append(kalman_gain)
 
         predicted_spherical_pos = track.state[:3]
-        S_inv = np.linalg.inv(innov_cov)
 
         for meas_idx in range(n_meas):
             innovation    = _wrap_angle_innovation(measurements[meas_idx] - predicted_spherical_pos)
