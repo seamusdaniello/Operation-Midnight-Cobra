@@ -20,7 +20,7 @@ arduinos:
       alive:           55006
 
   # 5 acoustic boards, each with its own port block: 550<board><field>,
-  # board = 2..6, field 0=az 1=range 2=detect 3=mic_id 4=board_id.
+  # board = 2..6, field 0=az 1=range 2=detect 3=mic_id 4=board_id 5=zone.
   acoustic-1:
     ip: 192.168.50.102
     ports:
@@ -29,6 +29,7 @@ arduinos:
       detect:   55022
       mic_id:   55023
       board_id: 55024
+      zone:     55025
   acoustic-2:
     ip: 192.168.50.103
     ports:
@@ -37,6 +38,7 @@ arduinos:
       detect:   55032
       mic_id:   55033
       board_id: 55034
+      zone:     55035
   acoustic-3:
     ip: 192.168.50.104
     ports:
@@ -45,6 +47,7 @@ arduinos:
       detect:   55042
       mic_id:   55043
       board_id: 55044
+      zone:     55045
   acoustic-4:
     ip: 192.168.50.105
     ports:
@@ -53,6 +56,7 @@ arduinos:
       detect:   55052
       mic_id:   55053
       board_id: 55054
+      zone:     55055
   acoustic-5:
     ip: 192.168.50.106
     ports:
@@ -61,6 +65,7 @@ arduinos:
       detect:   55062
       mic_id:   55063
       board_id: 55064
+      zone:     55065
 
 # TODO: FCP (currentMode, DNE hit confirmation) and the LiDAR-scan destination
 # are not among the 6 boards above — placement still unresolved.
