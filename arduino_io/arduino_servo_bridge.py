@@ -1,25 +1,26 @@
 """
 arduino_servo_bridge.py
-Pi-side interface for receiving servo position feedback from the Arduino
-over Ethernet (UDP) and exposing az/el current_angle proxies compatible
-with the existing LidarEngine and scanner pipeline.
+Pi-side interface for receiving LiDAR-gimbal position from the RF Arduino
+(which drives the gimbal autonomously) over Ethernet (UDP), exposing az/el
+current_angle proxies compatible with the LidarEngine and scanner pipeline.
 
-Arduino → Pi  (position feedback):
-    UDP packet, 8 bytes, little-endian:
-        [0:4]  az_deg   float32   azimuth angle in degrees
-        [4:8]  el_deg   float32   elevation angle in degrees
-    Arduino sends to PI_IP:FEEDBACK_PORT at ~100 Hz.
+Arduino → Pi  (gimbal position feedback):
+    One int32 per UDP packet, little-endian, one port per axis:
+        lidar_azimuth    -> arduinos.rf.ports.lidar_azimuth
+        lidar_elevation  -> arduinos.rf.ports.lidar_elevation
 
-Pi → Arduino  (sweep commands):
-    UDP packet, 1 byte:
-        0x01 = start sweep
-        0x00 = stop sweep
-    Pi sends to ARDUINO_IP:COMMAND_PORT.
+    ASSUMPTION: the int32 is millidegrees (degrees x1000), so 45.300° ->
+    45300. If the Arduino actually sends whole integer degrees, set
+    ANGLE_SCALE = 1 below. (The old feedback packet was float32 degrees;
+    millidegrees preserves that sub-degree precision in an int.)
 
-IP/ports are read from network/config.yaml (arduinos.servo_bridge) — edit
-that file, not this one, when an address changes.
+There is no Pi → Arduino command channel — the gimbal sweeps on its own.
+
+Ports are read from network/config.yaml (arduinos.rf.ports) — edit that
+file, not this one, when an address changes.
 """
 
+import select
 import socket
 import struct
 import sys
@@ -30,38 +31,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from network.network_config import arduino as arduino_config
 
-_servo_bridge = arduino_config("servo_bridge")
-ARDUINO_IP    = _servo_bridge["ip"]
-FEEDBACK_PORT = _servo_bridge["feedback_port"]   # Pi listens here for position packets
-COMMAND_PORT  = _servo_bridge["command_port"]    # Pi sends start/stop here
-RECV_TIMEOUT  = 1.0    # seconds — allows clean shutdown between retries
+_rf          = arduino_config("rf")
+AZ_PORT      = _rf["ports"]["lidar_azimuth"]
+EL_PORT      = _rf["ports"]["lidar_elevation"]
+RECV_TIMEOUT = 1.0      # seconds — allows clean shutdown between retries
+ANGLE_SCALE  = 1000.0   # int32 millidegrees -> degrees (see module docstring)
 
 
 class ArduinoServoClient:
     """
-    Receives az/el position packets from the Arduino and exposes them
-    as thread-safe properties. Call listen() in a dedicated thread.
+    Receives gimbal az/el position (one int32 per port) and exposes the
+    angles in degrees as thread-safe properties. Call listen() in a
+    dedicated thread.
     """
 
-    def __init__(
-        self,
-        arduino_ip: str = ARDUINO_IP,
-        feedback_port: int = FEEDBACK_PORT,
-        command_port: int = COMMAND_PORT,
-    ):
-        self._arduino_ip   = arduino_ip
-        self._command_port = command_port
-        self._running      = False
-        self._lock         = threading.Lock()
-        self._az           = 0.0
-        self._el           = 0.0
+    def __init__(self, az_port: int = AZ_PORT, el_port: int = EL_PORT):
+        self._running = False
+        self._lock    = threading.Lock()
+        self._az      = 0.0
+        self._el      = 0.0
 
-        self._recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._recv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._recv_sock.bind(("", feedback_port))
-        self._recv_sock.settimeout(RECV_TIMEOUT)
+        self._az_sock = self._bind(az_port)
+        self._el_sock = self._bind(el_port)
 
-        self._cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    @staticmethod
+    def _bind(port: int) -> socket.socket:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", port))
+        return sock
 
     @property
     def az_current_angle(self) -> float:
@@ -73,34 +71,31 @@ class ArduinoServoClient:
         with self._lock:
             return self._el
 
-    def send_command(self, start: bool) -> None:
-        """Send start (True) or stop (False) sweep command to the Arduino."""
-        self._cmd_sock.sendto(
-            b"\x01" if start else b"\x00",
-            (self._arduino_ip, self._command_port),
-        )
-
     def listen(self) -> None:
         """Block and receive position packets until stop() is called."""
         self._running = True
+        socks = [self._az_sock, self._el_sock]
         while self._running:
-            try:
-                data, _ = self._recv_sock.recvfrom(8)
-                if len(data) >= 8:
-                    az, el = struct.unpack_from("<ff", data)
-                    with self._lock:
-                        self._az = az
-                        self._el = el
-            except socket.timeout:
-                continue
+            ready, _, _ = select.select(socks, [], [], RECV_TIMEOUT)
+            for sock in ready:
+                data, _ = sock.recvfrom(4)
+                if len(data) < 4:
+                    continue
+                value,  = struct.unpack("<i", data[:4])
+                angle   = value / ANGLE_SCALE
+                with self._lock:
+                    if sock is self._az_sock:
+                        self._az = angle
+                    else:
+                        self._el = angle
 
     def stop(self) -> None:
         self._running = False
 
     def close(self) -> None:
         self.stop()
-        self._recv_sock.close()
-        self._cmd_sock.close()
+        self._az_sock.close()
+        self._el_sock.close()
 
     def __enter__(self):
         return self

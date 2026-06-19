@@ -1,51 +1,46 @@
-# network/config.yaml
-# Single source of truth for every static IP/port on the Pi <-> Arduino network.
-# Edit this file when hardware changes — nothing in the .py scripts should
-# hardcode an address anymore. No DHCP; every device below gets its IP set
-# directly in its own Arduino sketch.
+# Static IP/port map for the Pi <-> Arduino network. Single source of truth —
+# scripts read from here, no hardcoded addresses. No DHCP; 6 Arduinos total.
 
 pi:
   ip: 192.168.50.10
   iface: eth0
 
 arduinos:
+  # RF Arduino: one int32 per port. Reports its own range/az/el, the LiDAR
+  # gimbal az/el it drives, and an alive heartbeat.
   rf:
-    ip: 192.168.50.20
-    role: "RF contact reports — range/azimuth/elevation + alive heartbeat. One Arduino, 4 separate UDP ports, each carrying a single int32."
-    data_port: 5006     # rf_receiver.py listens here (production, not yet updated for the 4-port layout)
-    test_ports:         # test_arduino_connection.py listens on all 4 (decode/debug)
-      range:     55001
-      azimuth:   55002
-      elevation: 55003
-      alive:     55004
-
-  servo_bridge:
-    ip: 192.168.50.30
-    role: "Azimuth/elevation servo position feedback + sweep start/stop"
-    feedback_port: 5010  # Pi listens here for az/el position packets
-    command_port: 5011   # Pi sends start/stop sweep commands here
-
-  lidar_sink:
     ip: 192.168.50.101
-    role: "Receives the LiDAR scan stream forwarded by pi_to_arduino.py"
-    port: 5005
+    data_port: 5006      # rf_receiver.py (production aggregate listener)
+    ports:
+      rf_range:        55001
+      rf_azimuth:      55002
+      rf_elevation:    55003
+      lidar_azimuth:   55004
+      lidar_elevation: 55005
+      alive:           55006
 
-  # TODO: fill in IP once this Arduino is wired up and assigned an address.
-  # Per "What we need to the arduino from the Pi.md": acousticAz, acousticEl,
-  # acousticDetect.
-  acoustic:
-    ip: null
-    role: "Acoustic detection node (az/el/detect)"
-    port: null
+  # 5 acoustic boards, all sharing the same 5 ports. board_id/mic_id live in
+  # the payload (not the port) to identify which board/mic a reading is from.
+  acoustic-1:
+    ip: 192.168.50.102
+    ports: &acoustic_ports
+      az:       55020
+      range:    55021
+      detect:   55022
+      mic_id:   55023
+      board_id: 55024
+  acoustic-2:
+    ip: 192.168.50.103
+    ports: *acoustic_ports
+  acoustic-3:
+    ip: 192.168.50.104
+    ports: *acoustic_ports
+  acoustic-4:
+    ip: 192.168.50.105
+    ports: *acoustic_ports
+  acoustic-5:
+    ip: 192.168.50.106
+    ports: *acoustic_ports
 
-  # TODO: fill in IP. Per the same notes: currentMode + DNE hit confirmation.
-  fcp:
-    ip: null
-    role: "Fire control panel — currentMode, DNE hit confirmation"
-    port: null
-
-  # TODO: 6th Arduino's role and IP not yet decided.
-  spare:
-    ip: null
-    role: null
-    port: null
+# TODO: FCP (currentMode, DNE hit confirmation) and the LiDAR-scan destination
+# are not among the 6 boards above — placement still unresolved.

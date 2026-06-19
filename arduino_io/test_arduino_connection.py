@@ -1,16 +1,12 @@
 """
 test_arduino_connection.py
-Listens for RF contact reports from the Arduino over UDP and decodes them.
+Listens for the RF Arduino's UDP feeds and decodes them.
 
-One Arduino, 4 separate UDP ports — each port carries a single int32,
-little-endian, 4 bytes per packet:
-    range      -> network/config.yaml: arduinos.rf.test_ports.range
-    azimuth    -> ...test_ports.azimuth
-    elevation  -> ...test_ports.elevation
-    alive      -> ...test_ports.alive   (0 or 1 heartbeat, not a bool)
-
-Ports are read from network/config.yaml — edit that file, not this one,
-when an address changes.
+One Arduino, one int32 per port (little-endian, 4 bytes). Ports and field
+names are read straight from network/config.yaml (arduinos.rf.ports) —
+edit that file, not this one, when anything changes. Currently:
+    rf_range, rf_azimuth, rf_elevation, lidar_azimuth, lidar_elevation,
+    alive (0/1 heartbeat, not a bool).
 
 Usage:
     python3 test_arduino_connection.py
@@ -26,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from network.network_config import arduino as arduino_config
 
-TEST_PORTS  = arduino_config("rf")["test_ports"]
+PORTS       = arduino_config("rf")["ports"]
 PACKET_SIZE = 4   # one int32
 
 
@@ -42,14 +38,14 @@ def listen_on_port(field: str, port: int) -> None:
             continue
 
         value, = struct.unpack("<i", data[:PACKET_SIZE])
-        print(f"[{addr[0]}] {field:<9} = {value}")
+        print(f"[{addr[0]}] {field:<15} = {value}")
 
 
 def main():
-    print("[+] Listening on 4 ports — Ctrl-C to stop")
+    print(f"[+] Listening on {len(PORTS)} ports — Ctrl-C to stop")
     threads = [
         threading.Thread(target=listen_on_port, args=(field, port), daemon=True)
-        for field, port in TEST_PORTS.items()
+        for field, port in PORTS.items()
     ]
     for t in threads:
         t.start()

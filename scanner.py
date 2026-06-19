@@ -50,13 +50,10 @@ class Scanner:
         lidar_thread.start()
         arduino_thread.start()
 
-        self.arduino_client.send_command(start=True)
-
         print("[*] Scanner running — Ctrl-C to stop")
         self._scanner_loop()
 
         self._running = False
-        self.arduino_client.send_command(start=False)
         self.arduino_client.stop()
         self.lidar.stream_running = False
 

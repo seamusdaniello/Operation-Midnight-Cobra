@@ -11,7 +11,7 @@ Multi-target drone tracking system. A Lightware SF20 LiDAR mounted on az/el serv
 | Raspberry Pi (eth0 → `192.168.50.10`, static) | Runs tracker, LiDAR driver, UDP sender/receiver |
 | Lightware SF20 LiDAR | Range sensor on `/dev/ttyUSB0` |
 | Cisco switch + Ethernet splitter | Connects Pi + Arduino team on `192.168.50.0/24` — static IPs only, no DHCP |
-| Arduino team (6 boards, Ethernet shields) | RF detection, az/el servo bridge, LiDAR sink, acoustic, FCP, + 1 TBD — see `network/config.yaml` |
+| Arduino team (6 boards, Ethernet shields) | 1 RF (also drives the LiDAR gimbal) + 5 acoustic — see `network/config.yaml` |
 
 All Arduino IPs/ports are defined in one place: [`network/config.yaml`](network/config.yaml). Edit that file when hardware changes — the Python scripts read from it instead of hardcoding addresses. Run [`network/check_network.sh`](network/check_network.sh) to ping every configured Arduino and check the Pi's own interface.
 
@@ -25,9 +25,8 @@ tracker/        — EKF tracker + its smoke test
   multi_rat_tracker.py
   test_tracker.py
 arduino_io/     — everything that talks to an Arduino over UDP
-  pi_to_arduino.py            — Pi -> LiDAR-sink Arduino
   rf_receiver.py               — RF arduino -> Pi (production listener)
-  arduino_servo_bridge.py      — Pi <-> servo bridge Arduino (az/el feedback + sweep commands)
+  arduino_servo_bridge.py      — RF arduino -> Pi (LiDAR-gimbal az/el position)
   test_arduino_connection.py   — RF arduino -> Pi (decode/debug listener)
 network/        — network config + ops tooling
   config.yaml          — single source of truth for every static IP/port
@@ -53,14 +52,6 @@ pip3 install pyserial numpy scipy pytest pyyaml
 
 ## Running
 
-### Stream LiDAR to the Arduino sink
-
-```bash
-python3 arduino_io/pi_to_arduino.py
-```
-
-Detects the SF20 automatically by USB vendor ID and streams 13-byte UDP packets to whatever IP/port `network/config.yaml` has under `arduinos.lidar_sink`.
-
 ### Receive RF data from the Arduino
 
 ```bash
@@ -75,7 +66,7 @@ Listens on `arduinos.rf.data_port` (from config) and prints each `rf_reading` as
 python3 arduino_io/test_arduino_connection.py
 ```
 
-Listens on `arduinos.rf.test_port` and prints decoded `range_m / az_deg / el_deg / alive` per packet — useful when bringing up the RF Arduino link without going through the full tracker pipeline.
+Binds every port under `arduinos.rf.ports` (one thread each) and prints each int32 as it arrives, labelled by field — useful when bringing up the RF Arduino link without going through the full tracker pipeline.
 
 ### Run the tracker standalone
 
@@ -92,15 +83,6 @@ track_ids, track_positions = multi_rat_tracker(measurements, sample_time=0.5)
 
 ## UDP Packet Formats
 
-### Pi → LiDAR-sink Arduino (`arduinos.lidar_sink`, port 5005) — 13 bytes, little-endian
-
-| Bytes | Field | Type | Notes |
-|---|---|---|---|
-| 0–3 | az_millideg | int32 | Azimuth, degrees x1000 |
-| 4–7 | el_millideg | int32 | Elevation, degrees x1000 |
-| 8–11 | range_mm | int32 | Range in millimetres |
-| 12 | detected | uint8 | 1 = valid return within 90 m |
-
 ### RF Arduino → Pi, production (`arduinos.rf.data_port`, 5006) — 13 bytes, little-endian
 
 | Bytes | Field | Type | Notes |
@@ -110,25 +92,30 @@ track_ids, track_positions = multi_rat_tracker(measurements, sample_time=0.5)
 | 5–8 | rf_position_az | float32 | Azimuth in radians |
 | 9–12 | rf_position_el | float32 | Elevation in radians |
 
-### RF Arduino → Pi, debug (`arduinos.rf.test_port`, 55001) — 13 bytes, little-endian
+### RF Arduino → Pi (`arduinos.rf.ports`) — one int32 per port, 4 bytes, little-endian
 
-| Bytes | Field | Type | Notes |
-|---|---|---|---|
-| 0–3 | range_m | float32 | Range in metres |
-| 4–7 | az_deg | float32 | Azimuth in degrees |
-| 8–11 | el_deg | float32 | Elevation in degrees |
-| 12 | alive | uint8 | 1 = RF arduino alive, 0 = not alive (not a Python bool) |
+One UDP port per field; `test_arduino_connection.py` listens on all of them.
 
-### Servo bridge Arduino → Pi (`arduinos.servo_bridge`, feedback port 5010) — 8 bytes, little-endian
+| Port | Field |
+|---|---|
+| 55001 | rf_range |
+| 55002 | rf_azimuth |
+| 55003 | rf_elevation |
+| 55004 | lidar_azimuth |
+| 55005 | lidar_elevation |
+| 55006 | alive (0/1 heartbeat) |
 
-| Bytes | Field | Type | Notes |
-|---|---|---|---|
-| 0–3 | az_deg | float32 | Azimuth angle |
-| 4–7 | el_deg | float32 | Elevation angle |
+### RF Arduino → Pi, LiDAR-gimbal position (`arduinos.rf.ports`) — one int32 per port
 
-### Pi → Servo bridge Arduino (`arduinos.servo_bridge`, command port 5011) — 1 byte
+The RF Arduino drives the gimbal autonomously and reports its angle. One
+int32 per port, little-endian, assumed millidegrees (degrees × 1000);
+`arduino_servo_bridge.py` divides by 1000 to expose degrees. There is no
+Pi → Arduino command channel.
 
-`0x01` = start sweep, `0x00` = stop sweep.
+| Port | Field |
+|---|---|
+| 55004 | lidar_azimuth |
+| 55005 | lidar_elevation |
 
 ---
 
@@ -147,7 +134,6 @@ Expected output: **65 passed**.
 | `multi_rat_tracker` | Filter, angle wrapping, F/Q matrix properties, GNN assignment, track lifecycle (confirm, delete, reset, multi-target) |
 | `lidar_collect` | `LidarMeasurement` detection boundary, `lidar_formatting` parse/fail cases, buffer drain, `drain_as_tracker_input` filtering and unit conversion |
 | `rf_receiver` | `rf_reading` fields, `unpack_rf_reading` roundtrip for all four fields, packet size constant |
-| `pi_to_arduino` | `pack_measurement` byte layout, az/el millideg encoding, range in millimetres, detected flag encoding |
 
 No hardware is required to run the tests. Serial ports and GPIO are mocked.
 
