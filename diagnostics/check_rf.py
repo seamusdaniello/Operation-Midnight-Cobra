@@ -1,5 +1,5 @@
 """
-test_arduino_connection.py
+check_rf.py
 Listens for the RF Arduino's UDP feeds and decodes them.
 
 One Arduino, one int32 per port (little-endian, 4 bytes). Ports and field
@@ -9,7 +9,7 @@ edit that file, not this one, when anything changes. Currently:
     alive (0/1 heartbeat, not a bool).
 
 Usage:
-    python3 test_arduino_connection.py
+    python3 check_rf.py
 """
 
 import socket

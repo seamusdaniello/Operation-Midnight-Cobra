@@ -13,25 +13,30 @@ Multi-target drone tracking system. A Lightware SF20 LiDAR mounted on az/el serv
 | Cisco switch + Ethernet splitter | Connects Pi + Arduino team on `192.168.50.0/24` — static IPs only, no DHCP |
 | Arduino team (6 boards, Ethernet shields) | 1 RF (also drives the LiDAR gimbal) + 5 acoustic — see `network/config.yaml` |
 
-All Arduino IPs/ports are defined in one place: [`network/config.yaml`](network/config.yaml). Edit that file when hardware changes — the Python scripts read from it instead of hardcoding addresses. Run [`network/check_network.sh`](network/check_network.sh) to ping every configured Arduino and check the Pi's own interface.
+All Arduino IPs/ports are defined in one place: [`network/config.yaml`](network/config.yaml). Edit that file when hardware changes — the Python scripts read from it instead of hardcoding addresses. Run [`diagnostics/check_network.sh`](diagnostics/check_network.sh) to ping every configured Arduino and check the Pi's own interface.
 
 ---
 
 ## Layout
 
 ```
-scanner.py, lidar_collect.py   — core pipeline (root)
+scanner.py      — orchestrator (root): fuses LiDAR + servo position into frames
 tracker/        — EKF tracker + its smoke test
   multi_rat_tracker.py
   test_tracker.py
-arduino_io/     — everything that talks to an Arduino over UDP
+sensors/        — imported hardware input drivers
+  lidar_collect.py             — Lightware SF20 serial driver
   rf_receiver.py               — RF arduino -> Pi (production listener)
   arduino_servo_bridge.py      — RF arduino -> Pi (LiDAR-gimbal az/el position)
-  test_arduino_connection.py   — RF arduino -> Pi (decode/debug listener)
-network/        — network config + ops tooling
+network/        — network config
   config.yaml          — single source of truth for every static IP/port
-  network_config.py    — loader used by the arduino_io scripts
-  check_network.sh      — ping health check
+  network_config.py    — loader
+diagnostics/    — standalone hand-run tools (not imported by anything)
+  check_rf.py          — RF arduino port listener
+  check_acoustics.py   — dump two acoustic boards' packets
+  check_splitter.py    — confirm multiple boards reach the Pi through the splitter
+  check_network.sh     — ping health check
+  raw_listen.py        — dumb single-port UDP dumper
 tests/
   test_suite.py   — pytest suite covering all Python modules
 ```
@@ -55,7 +60,7 @@ pip3 install pyserial numpy scipy pytest pyyaml
 ### Receive RF data from the Arduino
 
 ```bash
-python3 arduino_io/rf_receiver.py
+python3 sensors/rf_receiver.py
 ```
 
 Listens on `arduinos.rf.data_port` (from config) and prints each `rf_reading` as it arrives.
@@ -63,7 +68,7 @@ Listens on `arduinos.rf.data_port` (from config) and prints each `rf_reading` as
 ### Decode/debug the RF connection directly
 
 ```bash
-python3 arduino_io/test_arduino_connection.py
+python3 diagnostics/check_rf.py
 ```
 
 Binds every port under `arduinos.rf.ports` (one thread each) and prints each int32 as it arrives, labelled by field — useful when bringing up the RF Arduino link without going through the full tracker pipeline.
@@ -94,7 +99,7 @@ track_ids, track_positions = multi_rat_tracker(measurements, sample_time=0.5)
 
 ### RF Arduino → Pi (`arduinos.rf.ports`) — one int32 per port, 4 bytes, little-endian
 
-One UDP port per field; `test_arduino_connection.py` listens on all of them.
+One UDP port per field; `diagnostics/check_rf.py` listens on all of them.
 
 | Port | Field |
 |---|---|

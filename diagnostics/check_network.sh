@@ -35,7 +35,7 @@ fi
 # --- Load Arduino IPs from config.yaml ---------------------------------------
 hdr "Arduino Connectivity (ping)"
 
-mapfile -t ARDUINO_ENTRIES < <(python3 - "$SCRIPT_DIR/config.yaml" <<'PYEOF'
+mapfile -t ARDUINO_ENTRIES < <(python3 - "$SCRIPT_DIR/../network/config.yaml" <<'PYEOF'
 import sys
 import yaml
 

@@ -23,8 +23,8 @@ import signal
 import threading
 import time
 
-from lidar_collect import LidarEngine
-from arduino_io.arduino_servo_bridge import ArduinoServoClient, AzimuthProxy, ElevationProxy
+from sensors.lidar_collect import LidarEngine
+from sensors.arduino_servo_bridge import ArduinoServoClient, AzimuthProxy, ElevationProxy
 
 LIDAR_HZ  = 200.0  # LiDAR polling rate
 STEP_HZ   = 50.0   # scanner frame rate (matches servo update rate)
