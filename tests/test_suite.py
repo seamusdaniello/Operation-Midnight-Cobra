@@ -426,18 +426,18 @@ class TestPackMeasurement:
 
     def test_az_roundtrip(self):
         m = LidarMeasurement(5000, az_rad=1.23, el_rad=0.0)
-        az, _, _, _ = struct.unpack("<fffB", pack_measurement(m))
-        assert az == pytest.approx(1.23, abs=1e-5)
+        az, _, _, _ = struct.unpack("<iiiB", pack_measurement(m))
+        assert az == round(math.degrees(1.23) * 1000)
 
     def test_el_roundtrip(self):
         m = LidarMeasurement(5000, az_rad=0.0, el_rad=-0.45)
-        _, el, _, _ = struct.unpack("<fffB", pack_measurement(m))
-        assert el == pytest.approx(-0.45, abs=1e-5)
+        _, el, _, _ = struct.unpack("<iiiB", pack_measurement(m))
+        assert el == round(math.degrees(-0.45) * 1000)
 
-    def test_range_converted_from_mm_to_m(self):
+    def test_range_encoded_in_millimetres(self):
         m = LidarMeasurement(range_mm=25_000)   # 25 m
-        _, _, rng, _ = struct.unpack("<fffB", pack_measurement(m))
-        assert rng == pytest.approx(25.0, abs=1e-4)
+        _, _, rng, _ = struct.unpack("<iiiB", pack_measurement(m))
+        assert rng == 25_000
 
     def test_detected_true_encodes_as_1(self):
         m = LidarMeasurement(range_mm=5000)     # within threshold → detected
@@ -448,70 +448,3 @@ class TestPackMeasurement:
         m = LidarMeasurement(range_mm=DETECTION_THRESHOLD_MM + 1)
         _, _, _, det = struct.unpack("<fffB", pack_measurement(m))
         assert det == 0
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  servo engines (no hardware)
-# ══════════════════════════════════════════════════════════════════════════════
-
-from azimuth_servo_sweep import AzimuthServoEngine, AMPLITUDE as AZ_AMPLITUDE, BIAS as AZ_BIAS
-from elevation_servo_sweep import ElevationServoEngine, AMPLITUDE as EL_AMPLITUDE
-
-
-class TestAzimuthServoEngine:
-    def test_instantiates_without_hardware(self):
-        engine = AzimuthServoEngine()
-        assert hasattr(engine, "current_angle")
-        engine.close()
-
-    def test_get_state_returns_expected_keys(self):
-        engine = AzimuthServoEngine()
-        state = engine.get_state(elapsed=1.0, angle=45.0)
-        for key in ("timestamp_s", "angle_deg", "sweep_running", "amplitude_deg"):
-            assert key in state
-        engine.close()
-
-    def test_get_state_angle_value(self):
-        engine = AzimuthServoEngine()
-        state = engine.get_state(elapsed=0.5, angle=30.0)
-        assert state["angle_deg"] == 30.0
-        engine.close()
-
-    def test_sweep_angle_stays_within_amplitude(self):
-        engine = AzimuthServoEngine()
-        angles = [
-            AZ_AMPLITUDE * math.sin(4.36 * t) + AZ_BIAS
-            for t in [i * 0.02 for i in range(100)]
-        ]
-        assert all(0.0 <= a <= 90.0 for a in angles)
-        engine.close()
-
-    def test_toggle_sweep_state(self):
-        engine = AzimuthServoEngine()
-        engine.sweep_running = True
-        engine.change_sweep_state()
-        assert engine.sweep_running is False
-        engine.close()
-
-
-class TestElevationServoEngine:
-    def test_instantiates_without_hardware(self):
-        engine = ElevationServoEngine()
-        assert hasattr(engine, "current_angle")
-        engine.close()
-
-    def test_get_state_returns_expected_keys(self):
-        engine = ElevationServoEngine()
-        state = engine.get_state(elapsed=1.0, angle=10.0)
-        for key in ("timestamp_s", "angle_deg", "sweep_running", "amplitude_deg"):
-            assert key in state
-        engine.close()
-
-    def test_sweep_angle_stays_within_amplitude(self):
-        engine = ElevationServoEngine()
-        angles = [
-            EL_AMPLITUDE * math.sin(0.1 * t)
-            for t in [i * 0.1 for i in range(200)]
-        ]
-        assert all(-EL_AMPLITUDE <= a <= EL_AMPLITUDE for a in angles)
-        engine.close()

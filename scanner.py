@@ -24,8 +24,7 @@ import threading
 import time
 
 from lidar_collect import LidarEngine
-from azimuth_servo_sweep import AzimuthServoEngine
-from elevation_servo_sweep import ElevationServoEngine
+from arduino_io.arduino_servo_bridge import ArduinoServoClient, AzimuthProxy, ElevationProxy
 
 LIDAR_HZ  = 200.0  # LiDAR polling rate
 STEP_HZ   = 50.0   # scanner frame rate (matches servo update rate)
@@ -33,9 +32,10 @@ STEP_HZ   = 50.0   # scanner frame rate (matches servo update rate)
 
 class Scanner:
     def __init__(self):
-        self.lidar    = LidarEngine()
-        self.azimuth  = AzimuthServoEngine()
-        self.elevation = ElevationServoEngine()
+        self.arduino_client = ArduinoServoClient()
+        self.azimuth        = AzimuthProxy(self.arduino_client)
+        self.elevation      = ElevationProxy(self.arduino_client)
+        self.lidar          = LidarEngine(az_engine=self.azimuth, el_engine=self.elevation)
 
         self.frames: list = []
         self._running = False
@@ -44,28 +44,26 @@ class Scanner:
         """Start all subsystems and block until stopped."""
         self._running = True
 
-        lidar_thread   = threading.Thread(target=self._lidar_loop,    daemon=True)
-        azimuth_thread = threading.Thread(target=self._azimuth_loop,  daemon=True)
-        elev_thread    = threading.Thread(target=self._elev_loop,     daemon=True)
+        lidar_thread   = threading.Thread(target=self._lidar_loop,   daemon=True)
+        arduino_thread = threading.Thread(target=self._arduino_loop, daemon=True)
 
         lidar_thread.start()
-        azimuth_thread.start()
-        elev_thread.start()
+        arduino_thread.start()
+
+        self.arduino_client.send_command(start=True)
 
         print("[*] Scanner running — Ctrl-C to stop")
         self._scanner_loop()
 
         self._running = False
-        self.azimuth.sweep_running  = False
-        self.elevation.sweep_running = False
-        self.lidar.stream_running   = False
+        self.arduino_client.send_command(start=False)
+        self.arduino_client.stop()
+        self.lidar.stream_running = False
 
         lidar_thread.join()
-        azimuth_thread.join()
-        elev_thread.join()
+        arduino_thread.join()
         self.lidar.close()
-        self.azimuth.close()
-        self.elevation.close()
+        self.arduino_client.close()
 
     def stop(self):
         self._running = False
@@ -73,11 +71,8 @@ class Scanner:
     def _lidar_loop(self):
         self.lidar.lidar_stream(callback=None, sample_rate_hz=LIDAR_HZ)
 
-    def _azimuth_loop(self):
-        self.azimuth.sweep()
-
-    def _elev_loop(self):
-        self.elevation.sweep()
+    def _arduino_loop(self):
+        self.arduino_client.listen()
 
     def _scanner_loop(self):
         interval = 1.0 / STEP_HZ

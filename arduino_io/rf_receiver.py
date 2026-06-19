@@ -8,17 +8,22 @@ Packet (13 bytes, little-endian):
     [5:9]  rf_position_az float32  azimuth in radians
     [9:13] rf_position_el float32  elevation in radians
 
-Network:
-    Arduino  192.168.50.20  (sender)
-    Pi       192.168.50.10  (listener, port 5006)
+Listen port is read from network/config.yaml (arduinos.rf.data_port) —
+edit that file, not this one, when the address changes.
 """
 
 import socket
 import struct
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from network.network_config import arduino as arduino_config
 
 LISTEN_IP   = "0.0.0.0"
-LISTEN_PORT = 5006
+LISTEN_PORT = arduino_config("rf")["data_port"]
 PACKET_SIZE = 13
 
 
