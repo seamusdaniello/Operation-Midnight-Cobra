@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest tests/ -v)",
+      "Bash(python3 -m pip show pytest pyserial pyyaml numpy scipy)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -m venv /tmp/omc-venv)",
+      "Bash(/tmp/omc-venv/bin/pip install *)",
+      "Bash(/tmp/omc-venv/bin/python -m pytest tests/ -v)",
+      "Bash(find / -maxdepth 6 -iname \"fcp_controller.py\")",
+      "Bash(find / -maxdepth 6 -iname \"*.git\" -path \"*fcp*\")",
+      "Read(//home/**)",
+      "Bash(python3 -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(apt-cache policy *)"
+    ]
+  }
+}

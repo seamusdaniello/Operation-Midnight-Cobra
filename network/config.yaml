@@ -17,55 +17,72 @@ arduinos:
       rf_elevation:    55003
       lidar_azimuth:   55004
       lidar_elevation: 55005
-      alive:           55006
+      rf_detection_bool: 55006
+      rf_detection_strength: 55007
+      alive: 55008
 
   # 5 acoustic boards, each with its own port block: 550<board><field>,
-  # board = 2..6, field 0=az 1=range 2=detect 3=mic_id 4=board_id 5=zone.
+  # board = 2..6, field 0=zone 1=az 2=range 3=detect 4=mic_id 5=board_id.
   acoustic-1:
     ip: 192.168.50.102
+    mac: DE:ED:BE:EF:FE:ED
     ports:
-      az:       55020
-      range:    55021
-      detect:   55022
-      mic_id:   55023
-      board_id: 55024
-      zone:     55025
+      zone:     55020
+      az:       55021
+      range:    55022
+      detect:   55023
+      mic_id:   55024
+      board_id: 55025
   acoustic-2:
     ip: 192.168.50.103
+    mac: DA:AD:BE:EF:FE:ED
     ports:
-      az:       55030
-      range:    55031
-      detect:   55032
-      mic_id:   55033
-      board_id: 55034
-      zone:     55035
+      zone:     55030
+      az:       55031
+      range:    55032
+      detect:   55033
+      mic_id:   55034
+      board_id: 55035
   acoustic-3:
     ip: 192.168.50.104
+    mac: DE:AD:BE:EF:FA:AD
     ports:
-      az:       55040
-      range:    55041
-      detect:   55042
-      mic_id:   55043
-      board_id: 55044
-      zone:     55045
+      zone:     55040
+      az:       55041
+      range:    55042
+      detect:   55043
+      mic_id:   55044
+      board_id: 55045
   acoustic-4:
     ip: 192.168.50.105
     ports:
-      az:       55050
-      range:    55051
-      detect:   55052
-      mic_id:   55053
-      board_id: 55054
-      zone:     55055
+      zone:     55050
+      az:       55051
+      range:    55052
+      detect:   55053
+      mic_id:   55054
+      board_id: 55055
   acoustic-5:
     ip: 192.168.50.106
     ports:
-      az:       55060
-      range:    55061
-      detect:   55062
-      mic_id:   55063
-      board_id: 55064
-      zone:     55065
+      zone:     55060
+      az:       55061
+      range:    55062
+      detect:   55063
+      mic_id:   55064
+      board_id: 55065
 
 # TODO: FCP (currentMode, DNE hit confirmation) and the LiDAR-scan destination
 # are not among the 6 boards above — placement still unresolved.
+
+# Outbound link from the tracker to the FCP (positional/health messages).
+# Serial is primary; UDP is fallback-only, used when the serial link is down.
+# NOTE: udp_fallback.ip is a placeholder (loopback) — point it at the real
+# FCP host if it doesn't run on the Pi itself.
+fcp:
+  serial:
+    port: /dev/ttyACM0
+    baud: 115200
+  udp_fallback:
+    ip: 127.0.0.1
+    port: 5000

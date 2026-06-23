@@ -10,6 +10,7 @@ import math
 import struct
 import numpy as np
 import pytest
+import serial
 from unittest.mock import MagicMock, patch
 
 
@@ -19,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 from multi_rat_tracker import (
     multi_rat_tracker,
+    confirmed_track_states,
     reset_tracker,
     _filter_valid_measurements,
     _wrap_angle_innovation,
@@ -258,6 +260,32 @@ class TestTrackerLifecycle:
         assert ids[-1] > 1   # second track has a higher ID
 
 
+class TestConfirmedTrackStates:
+    def _make_meas(self, az=0.3, el=0.1, rng=30.0):
+        return np.array([[az, el, rng]])
+
+    def test_empty_before_confirmation(self):
+        multi_rat_tracker(self._make_meas(), sample_time=0.5)
+        assert confirmed_track_states() == []
+
+    def test_returns_full_six_element_state(self):
+        meas = self._make_meas()
+        for _ in range(HITS_NEEDED_TO_CONFIRM):
+            multi_rat_tracker(meas, sample_time=0.5)
+        states = confirmed_track_states()
+        assert len(states) == 1
+        track_id, state = states[0]
+        assert isinstance(track_id, int)
+        assert state.shape == (6,)
+
+    def test_matches_ids_from_multi_rat_tracker(self):
+        meas = self._make_meas()
+        for _ in range(HITS_NEEDED_TO_CONFIRM):
+            ids, _ = multi_rat_tracker(meas, sample_time=0.5)
+        states = confirmed_track_states()
+        assert [tid for tid, _ in states] == ids.tolist()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  lidar_collect
 # ══════════════════════════════════════════════════════════════════════════════
@@ -277,6 +305,14 @@ class TestLidarMeasurement:
     def test_detected_false_beyond_threshold(self):
         m = LidarMeasurement(range_mm=DETECTION_THRESHOLD_MM + 1000)
         assert m.detected is False
+
+    def test_detected_false_for_negative_sentinel(self):
+        m = LidarMeasurement(range_mm=-1000)  # -1 m sentinel
+        assert m.detected is False
+
+    def test_detected_false_for_any_negative(self):
+        for rng in (-1, -50, -99999):
+            assert LidarMeasurement(range_mm=rng).detected is False
 
     def test_az_el_stored_correctly(self):
         m = LidarMeasurement(range_mm=5000, az_rad=1.2, el_rad=-0.3)
@@ -352,6 +388,14 @@ class TestDrainAsTrackerInput:
         result = mock_lidar_engine.drain_as_tracker_input()
         assert result[0, 2] == pytest.approx(10.0)
 
+    def test_negative_readings_excluded_from_tracker_input(self, mock_lidar_engine):
+        mock_lidar_engine._buffer.extend([
+            LidarMeasurement(5000),    # valid
+            LidarMeasurement(-1000),   # -1 m sentinel, must not reach the filter
+        ])
+        result = mock_lidar_engine.drain_as_tracker_input()
+        assert result.shape[0] == 1
+
     def test_empty_buffer_returns_empty_array(self, mock_lidar_engine):
         result = mock_lidar_engine.drain_as_tracker_input()
         assert result.shape == (0, 3)
@@ -410,3 +454,165 @@ class TestUnpackRfReading:
 
     def test_packet_size_constant_matches_struct(self):
         assert len(self._make_packet()) == PACKET_SIZE
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  fcp_uplink
+# ══════════════════════════════════════════════════════════════════════════════
+
+from fcp_uplink import (
+    zone_for_range,
+    build_positional_message,
+    FCPUplink,
+    ZONE_3_CENTRAL_M,
+    ZONE_2_MIDDLE_M,
+    ZONE_1_OUTER_M,
+)
+
+TEST_FCP_CONFIG = {
+    "serial":       {"port": "/dev/ttyACM0", "baud": 115200},
+    "udp_fallback": {"ip": "127.0.0.1", "port": 5000},
+}
+
+
+class TestZoneForRange:
+    def test_central_zone(self):
+        assert zone_for_range(5.0) == 3
+
+    def test_central_zone_boundary(self):
+        assert zone_for_range(ZONE_3_CENTRAL_M) == 3
+
+    def test_middle_zone_just_past_central(self):
+        assert zone_for_range(ZONE_3_CENTRAL_M + 0.1) == 2
+
+    def test_middle_zone_boundary(self):
+        assert zone_for_range(ZONE_2_MIDDLE_M) == 2
+
+    def test_outer_zone_just_past_middle(self):
+        assert zone_for_range(ZONE_2_MIDDLE_M + 0.1) == 1
+
+    def test_outer_zone_boundary(self):
+        assert zone_for_range(ZONE_1_OUTER_M) == 1
+
+    def test_beyond_outer_zone_is_none(self):
+        assert zone_for_range(ZONE_1_OUTER_M + 0.1) is None
+
+
+class TestBuildPositionalMessage:
+    def test_none_when_outside_every_zone(self):
+        msg = build_positional_message(1, 0.1, 0.2, ZONE_1_OUTER_M + 5.0, 0.0, 0.0, 0.0)
+        assert msg is None
+
+    def test_msg_type_and_rat_id(self):
+        msg = build_positional_message(7, 0.1, 0.2, 30.0, 0.0, 0.0, 0.0)
+        assert msg["msg_type"] == "positional"
+        assert msg["rat_id"] == "7"
+        assert isinstance(msg["rat_id"], str)
+
+    def test_zone_matches_range(self):
+        msg = build_positional_message(1, 0.0, 0.0, 50.0, 0.0, 0.0, 0.0)
+        assert msg["zone"] == 2
+
+    def test_values_block(self):
+        msg = build_positional_message(1, 0.5, -0.3, 40.0, 0.0, 0.0, 0.0)
+        assert msg["values"] == {"az_value": 0.5, "el_value": -0.3, "range_value": 40.0}
+
+    def test_rates_block(self):
+        msg = build_positional_message(1, 0.0, 0.0, 40.0, 0.04, -0.01, 1.2)
+        assert msg["rates"] == {"az_rate": 0.04, "el_rate": -0.01, "range_rate": 1.2}
+
+    def test_current_time_is_recent_unix_timestamp(self):
+        import time
+        before = time.time()
+        msg = build_positional_message(1, 0.0, 0.0, 40.0, 0.0, 0.0, 0.0)
+        after = time.time()
+        assert before <= msg["current_time"] <= after
+
+
+class TestFCPUplinkSerialPrimary:
+    def test_send_writes_to_serial_when_available(self):
+        with patch("fcp_uplink.serial.Serial") as mock_serial_cls, \
+             patch("fcp_uplink.socket.socket") as mock_socket_cls:
+            mock_ser = MagicMock()
+            mock_serial_cls.return_value = mock_ser
+            uplink = FCPUplink(config=TEST_FCP_CONFIG)
+
+            uplink.send({"msg_type": "positional"})
+
+            assert mock_ser.write.called
+            mock_socket_cls.return_value.sendto.assert_not_called()
+
+    def test_send_payload_is_newline_terminated_json(self):
+        with patch("fcp_uplink.serial.Serial") as mock_serial_cls, \
+             patch("fcp_uplink.socket.socket"):
+            mock_ser = MagicMock()
+            mock_serial_cls.return_value = mock_ser
+            uplink = FCPUplink(config=TEST_FCP_CONFIG)
+
+            uplink.send({"msg_type": "positional", "rat_id": "3"})
+
+            payload = mock_ser.write.call_args[0][0]
+            assert payload.endswith(b"\n")
+            import json
+            assert json.loads(payload.decode("utf-8")) == {"msg_type": "positional", "rat_id": "3"}
+
+
+class TestFCPUplinkUdpFallback:
+    def test_falls_back_to_udp_when_serial_unavailable_at_open(self):
+        with patch("fcp_uplink.serial.Serial", side_effect=serial.SerialException("no device")), \
+             patch("fcp_uplink.socket.socket") as mock_socket_cls:
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            uplink = FCPUplink(config=TEST_FCP_CONFIG)
+
+            uplink.send({"msg_type": "positional"})
+
+            mock_sock.sendto.assert_called_once()
+            addr = mock_sock.sendto.call_args[0][1]
+            assert addr == ("127.0.0.1", 5000)
+
+    def test_falls_back_to_udp_when_serial_write_fails(self):
+        with patch("fcp_uplink.serial.Serial") as mock_serial_cls, \
+             patch("fcp_uplink.socket.socket") as mock_socket_cls:
+            mock_ser = MagicMock()
+            mock_ser.write.side_effect = serial.SerialException("write failed")
+            mock_serial_cls.return_value = mock_ser
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            uplink = FCPUplink(config=TEST_FCP_CONFIG)
+
+            uplink.send({"msg_type": "positional"})
+
+            mock_sock.sendto.assert_called_once()
+
+    def test_stays_on_udp_after_serial_write_fails_once(self):
+        with patch("fcp_uplink.serial.Serial") as mock_serial_cls, \
+             patch("fcp_uplink.socket.socket") as mock_socket_cls:
+            mock_ser = MagicMock()
+            mock_ser.write.side_effect = serial.SerialException("write failed")
+            mock_serial_cls.return_value = mock_ser
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            uplink = FCPUplink(config=TEST_FCP_CONFIG)
+
+            uplink.send({"msg_type": "positional"})
+            uplink.send({"msg_type": "positional"})
+
+            assert mock_ser.write.call_count == 1   # not retried after first failure
+            assert mock_sock.sendto.call_count == 2
+
+
+class TestFCPUplinkClose:
+    def test_close_closes_serial_and_socket(self):
+        with patch("fcp_uplink.serial.Serial") as mock_serial_cls, \
+             patch("fcp_uplink.socket.socket") as mock_socket_cls:
+            mock_ser = MagicMock()
+            mock_serial_cls.return_value = mock_ser
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            uplink = FCPUplink(config=TEST_FCP_CONFIG)
+
+            uplink.close()
+
+            mock_ser.close.assert_called_once()
+            mock_sock.close.assert_called_once()

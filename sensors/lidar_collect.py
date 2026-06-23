@@ -52,7 +52,11 @@ class LidarMeasurement:
         self.range    = range_mm
         self.az_rad   = az_rad
         self.el_rad   = el_rad
-        self.detected = range_mm < DETECTION_THRESHOLD_MM
+        # A valid return is a non-negative range under the threshold. The lower
+        # bound rejects error sentinels (the LiDAR reports -1, but anything
+        # negative — or NaN — fails this) so they never reach the Kalman filter
+        # via drain_as_tracker_input, which gates on this flag.
+        self.detected = 0 <= range_mm < DETECTION_THRESHOLD_MM
 
     def __repr__(self) -> str:
         return (
@@ -71,8 +75,8 @@ class LidarEngine:
         self._buffer = []
         self._buffer_lock = threading.Lock()
         self.stream_running = False
-        self._az_engine = az_engine   # AzimuthServoEngine  – read .current_angle (deg)
-        self._el_engine = el_engine   # ElevationServoEngine – read .current_angle (deg)
+        self._az_engine = az_engine   # AzimuthProxy   – read .current_angle (deg), RF Arduino feedback
+        self._el_engine = el_engine   # ElevationProxy – read .current_angle (deg), RF Arduino feedback
 
     def drain_buffer(self) -> list:
         """Return all buffered measurements since the last drain and clear the buffer."""

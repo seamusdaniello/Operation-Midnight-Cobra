@@ -21,6 +21,7 @@ All Arduino IPs/ports are defined in one place: [`network/config.yaml`](network/
 
 ```
 scanner.py      — orchestrator (root): fuses LiDAR + servo position into frames
+fcp_bridge.py   — orchestrator (root): tracker -> FCP uplink, live
 tracker/        — EKF tracker + its smoke test
   multi_rat_tracker.py
   test_tracker.py
@@ -28,6 +29,8 @@ sensors/        — imported hardware input drivers
   lidar_collect.py             — Lightware SF20 serial driver
   rf_receiver.py               — RF arduino -> Pi (production listener)
   arduino_servo_bridge.py      — RF arduino -> Pi (LiDAR-gimbal az/el position)
+integration/    — outbound drivers to other systems
+  fcp_uplink.py        — confirmed tracks -> FCP 'positional' messages (serial, UDP fallback)
 network/        — network config
   config.yaml          — single source of truth for every static IP/port
   network_config.py    — loader
@@ -42,6 +45,7 @@ tests/
 ```
 
 `scanner.py` stays at the repo root and fuses LiDAR readings with servo position into per-frame output.
+`fcp_bridge.py` is the live version of that pipeline that also runs the tracker and pushes confirmed tracks to the FCP.
 
 ---
 
@@ -84,6 +88,18 @@ measurements = np.array([[0.3, 0.1, 35.0]])   # [az_rad, el_rad, range_m]
 track_ids, track_positions = multi_rat_tracker(measurements, sample_time=0.5)
 ```
 
+### Bridge confirmed tracks to the FCP
+
+```bash
+python3 fcp_bridge.py
+```
+
+Streams the LiDAR + live gimbal position, runs the tracker, and sends every
+confirmed track to the FCP as a `positional` message — see
+[FCP Uplink](#fcp-uplink) below. Requires the LiDAR and the RF Arduino's
+gimbal-feedback link; no FCP connection is required for it to start (it logs
+and falls back to UDP if the serial link isn't there).
+
 ---
 
 ## UDP Packet Formats
@@ -124,21 +140,53 @@ Pi → Arduino command channel.
 
 ---
 
+## FCP Uplink
+
+`fcp_bridge.py` reports each confirmed track to the FCP as a `positional`
+message — see `integration/fcp_uplink.py`. Sent over serial
+(`network/config.yaml: fcp.serial`, `/dev/ttyACM0`) when available; falls
+back to UDP (`fcp.udp_fallback`) for the rest of the process's life once a
+serial write fails. One JSON object per line:
+
+```json
+{
+  "msg_type": "positional",
+  "rat_id": "<tracker's track_id, as a string>",
+  "zone": 3,
+  "values":  {"az_value": 0.21, "el_value": 0.05, "range_value": 27.4},
+  "rates":   {"az_rate": 0.01, "el_rate": -0.02, "range_rate": -0.6},
+  "current_time": 1750000000.123
+}
+```
+
+| Field | Notes |
+|---|---|
+| `zone` | 1 = outer (≤85 m), 2 = middle (≤60 m), 3 = central (≤30 m, engage-eligible). Tracks beyond 85 m aren't sent. |
+| `values.*`, `rates.*` | Radians / metres / (rad or m)/s — the tracker's native units, not degrees. |
+| `current_time` | Unix epoch seconds. |
+
+These two assumptions (units, timestamp format) haven't been confirmed
+against the FCP's `rat_model.py` — adjust `build_positional_message()` if
+the FCP expects degrees or an ISO timestamp instead.
+
+---
+
 ## Running the Tests
 
 ```bash
 pytest tests/ -v
 ```
 
-Expected output: **65 passed**.
+Expected output: **84 passed**.
 
 ### What the tests cover
 
 | Module | Tests |
 |---|---|
-| `multi_rat_tracker` | Filter, angle wrapping, F/Q matrix properties, GNN assignment, track lifecycle (confirm, delete, reset, multi-target) |
+| `multi_rat_tracker` | Filter, angle wrapping, F/Q matrix properties, GNN assignment, track lifecycle (confirm, delete, reset, multi-target), `confirmed_track_states` |
 | `lidar_collect` | `LidarMeasurement` detection boundary, `lidar_formatting` parse/fail cases, buffer drain, `drain_as_tracker_input` filtering and unit conversion |
 | `rf_receiver` | `rf_reading` fields, `unpack_rf_reading` roundtrip for all four fields, packet size constant |
+| `fcp_uplink` | Zone classification boundaries, `positional` message shape, serial-primary send, UDP fallback (on open failure and on write failure), close |
 
 No hardware is required to run the tests. Serial ports and GPIO are mocked.
 

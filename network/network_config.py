@@ -34,3 +34,7 @@ def arduino(name: str) -> dict:
         return _config["arduinos"][name]
     except KeyError:
         raise KeyError(f"No arduino named '{name}' in {CONFIG_PATH}") from None
+
+
+def fcp() -> dict:
+    return _config["fcp"]

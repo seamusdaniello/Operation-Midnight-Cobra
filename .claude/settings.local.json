@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(system_profiler SPUSBDataType)",
+      "Bash(python3 -c ' *)",
+      "Bash(git rm *)",
+      "Bash(rm -f pi_to_simulink_test.py)",
+      "Bash(git mv *)",
+      "Bash(git add *)",
+      "Bash(python3 -c \"import yaml\")",
+      "Bash(echo \"yaml-check-exit:$?\")",
+      "Read(//Users/seamusdaniello/.Trash/**)",
+      "Bash(git -C /Users/seamusdaniello/Desktop/Operation-Midnight-Cobra log --all --diff-filter=A --name-only)",
+      "Bash(python3 -m pytest tests/ -q)"
+    ]
+  }
+}

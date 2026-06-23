@@ -201,6 +201,19 @@ def multi_rat_tracker(
     return confirmed_track_ids, confirmed_track_positions
 
 
+def confirmed_track_states() -> list[tuple[int, np.ndarray]]:
+    """
+    Return (track_id, full 6-element state) for every currently confirmed
+    track. multi_rat_tracker()'s own return value only carries position
+    ([az, el, range]) — use this instead when a caller also needs the rate
+    terms (e.g. an uplink that reports az_rate/el_rate/range_rate).
+
+    Call this right after multi_rat_tracker() in the same cycle so the
+    states reflect that cycle's update, not a later predict step.
+    """
+    return [(t.track_id, t.state.copy()) for t in _active_tracks if t.confirmed]
+
+
 # ─── EKF matrix builders ──────────────────────────────────────────────────────
 
 def _build_state_transition_matrix(sample_time: float) -> np.ndarray:

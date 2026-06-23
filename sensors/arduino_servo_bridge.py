@@ -106,8 +106,9 @@ class ArduinoServoClient:
 
 class AzimuthProxy:
     """
-    Drop-in replacement for AzimuthServoEngine.
-    current_angle is sourced from live Arduino feedback.
+    Azimuth angle proxy. current_angle is sourced from live RF Arduino
+    feedback (arduinos.rf.ports.lidar_azimuth) — the Pi no longer drives
+    the gimbal over GPIO.
     """
 
     def __init__(self, client: ArduinoServoClient):
@@ -124,8 +125,9 @@ class AzimuthProxy:
 
 class ElevationProxy:
     """
-    Drop-in replacement for ElevationServoEngine.
-    current_angle is sourced from live Arduino feedback.
+    Elevation angle proxy. current_angle is sourced from live RF Arduino
+    feedback (arduinos.rf.ports.lidar_elevation) — the Pi no longer drives
+    the gimbal over GPIO.
     """
 
     def __init__(self, client: ArduinoServoClient):
